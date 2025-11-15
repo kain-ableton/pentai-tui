@@ -42,7 +42,9 @@ from datetime import datetime
 import requests
 
 from textual.app import App, ComposeResult
-from textual.widgets import TextLog, Input, Static
+from textual.widgets import RichLog, Input, Static, Footer
+from textual.containers import Container
+from textual.screen import Screen
 
 
 # =========================
@@ -331,6 +333,49 @@ Output format:
 - Optional: how a blue team might detect that step (logs, alerts, artefacts).
 """
 
+EXPLOIT_INSTRUCTIONS = """
+Mode: Exploit Development & Analysis.
+Assist with exploit development, vulnerability analysis, and payload crafting.
+
+Tasks:
+- Analyze vulnerabilities and suggest exploitation strategies.
+- Help craft payloads (reverse shells, shellcode, etc.) for authorized targets.
+- Explain exploit mitigations (ASLR, DEP, stack canaries) and bypass techniques.
+- Review exploit code for errors or improvements.
+- Suggest tools: metasploit, pwntools, searchsploit, etc.
+
+Always emphasize testing in controlled environments only.
+"""
+
+OSINT_INSTRUCTIONS = """
+Mode: OSINT & Intelligence Gathering.
+Support open-source intelligence gathering within legal and ethical boundaries.
+
+Focus areas:
+- Domain/subdomain enumeration (amass, subfinder, dnsenum)
+- Email/username discovery (theHarvester, hunter.io)
+- Technology fingerprinting (whatweb, wappalyzer, builtwith)
+- Public data sources (shodan, censys, wayback machine)
+- Social media reconnaissance techniques
+- Google dorking and advanced search operators
+
+Remind user to respect privacy and legal boundaries.
+"""
+
+PRIVESC_INSTRUCTIONS = """
+Mode: Privilege Escalation Assistant.
+Help identify and exploit privilege escalation vectors on compromised systems.
+
+Areas to cover:
+- Linux: SUID binaries, sudo misconfigurations, kernel exploits, cron jobs, capabilities
+- Windows: unquoted service paths, weak permissions, always install elevated, token impersonation
+- Common tools: LinPEAS, WinPEAS, linux-exploit-suggester, powerup.ps1
+- Manual enumeration commands for both Windows and Linux
+- Kernel version checks and exploit-db searches
+
+Provide specific commands and explain what to look for in output.
+"""
+
 MODE_INSTRUCTIONS = {
     "chat": CHAT_INSTRUCTIONS,
     "cmd": CMD_INSTRUCTIONS,
@@ -338,9 +383,12 @@ MODE_INSTRUCTIONS = {
     "loot": LOOT_INSTRUCTIONS,
     "report": REPORT_INSTRUCTIONS,
     "red": REDTEAM_INSTRUCTIONS,
+    "exploit": EXPLOIT_INSTRUCTIONS,
+    "osint": OSINT_INSTRUCTIONS,
+    "privesc": PRIVESC_INSTRUCTIONS,
 }
 
-MODES = ["cmd", "chat", "recon", "loot", "report", "red"]
+MODES = ["cmd", "chat", "recon", "loot", "report", "red", "exploit", "osint", "privesc"]
 
 MODE_DEFAULT_PROMPTS = {
     "cmd": (
@@ -366,6 +414,18 @@ MODE_DEFAULT_PROMPTS = {
         "For each step, include objective, example commands/tools, and evidence to collect. "
         "Also mention how defenders might detect each step.\n\n"
     ),
+    "exploit": (
+        "Analyze the vulnerability or provide exploit development guidance. "
+        "Include payload suggestions, exploitation techniques, and mitigation bypasses where applicable.\n\n"
+    ),
+    "osint": (
+        "Perform OSINT analysis on the target. Suggest reconnaissance techniques, tools, and commands "
+        "for gathering publicly available information within legal boundaries.\n\n"
+    ),
+    "privesc": (
+        "Analyze privilege escalation opportunities. Review system information and suggest "
+        "enumeration commands and exploitation techniques for both Linux and Windows environments.\n\n"
+    ),
 }
 
 
@@ -377,7 +437,7 @@ class LLMClient:
     def __init__(self) -> None:
         self.api_key = os.environ.get("AI_API_KEY")
         self.base_url = os.environ.get("AI_BASE_URL", "https://api.openai.com/v1")
-        self.model = os.environ.get("AI_MODEL", "gpt-5.1-mini")
+        self.model = os.environ.get("AI_MODEL", "gpt-4o-mini")
 
         if not self.api_key:
             raise RuntimeError("AI_API_KEY not set in environment")
@@ -476,12 +536,212 @@ def view_logs(target_name: str, last: int = 10) -> None:
 #  TUI APP
 # =========================
 
+class TargetInfoScreen(Screen):
+    """Screen to display detailed target information with rich formatting."""
+    
+    BINDINGS = [("escape", "dismiss", "Back")]
+    
+    def __init__(self, target: TargetContext) -> None:
+        super().__init__()
+        self.target = target
+    
+    def compose(self) -> ComposeResult:
+        content = f"""
+[bold cyan]╔══════════════════════════════════════════════════════════════╗
+║                  Target Information                          ║
+╚══════════════════════════════════════════════════════════════╝[/bold cyan]
+
+[bold yellow]Name:[/bold yellow] {self.target.name}
+
+[bold yellow]Scope:[/bold yellow]
+{self.target.scope}
+
+[bold yellow]Notes:[/bold yellow]
+{self.target.notes}
+"""
+        
+        if self.target.tags:
+            tags_str = ", ".join([f"[cyan]{t}[/cyan]" for t in self.target.tags])
+            content += f"\n[bold yellow]Tags:[/bold yellow] {tags_str}"
+        
+        if self.target.hosts:
+            content += f"\n\n[bold yellow]Tracked Hosts:[/bold yellow]"
+            for host in self.target.hosts:
+                content += f"\n  [cyan]•[/cyan] {host}"
+        
+        if self.target.findings:
+            content += f"\n\n[bold yellow]Findings:[/bold yellow]"
+            for i, finding in enumerate(self.target.findings, 1):
+                content += f"\n  [red]{i}.[/red] {finding}"
+        
+        if self.target.credentials:
+            content += f"\n\n[bold yellow]Credentials:[/bold yellow]"
+            for user, pwd in self.target.credentials.items():
+                content += f"\n  [green]•[/green] {user}: {pwd}"
+        
+        content += "\n\n[dim italic]Press ESC to return[/dim italic]"
+        
+        yield Static(content, id="target_info")
+    
+    def action_dismiss(self) -> None:
+        self.app.pop_screen()
+
+
 class PentAIApp(App):
-    """Simple vertical layout: header, chat log, input line."""
+    """Enhanced TUI with rich styling and advanced features."""
+    
+    CSS = """
+    Screen {
+        background: $surface;
+    }
+    
+    #header_container {
+        dock: top;
+        height: auto;
+        background: $boost;
+        border: heavy $primary;
+    }
+    
+    #header {
+        padding: 1;
+        background: $boost;
+        color: $text;
+        text-style: bold;
+    }
+    
+    #mode_indicator {
+        dock: top;
+        height: 3;
+        background: $panel;
+        border: solid $accent;
+        padding: 1;
+    }
+    
+    #chat_container {
+        height: 1fr;
+        border: heavy $primary;
+        background: $surface;
+    }
+    
+    #chat_log {
+        height: 1fr;
+        background: $surface;
+        border: none;
+        padding: 1 2;
+        scrollbar-gutter: stable;
+    }
+    
+    #input_container {
+        dock: bottom;
+        height: auto;
+        background: $panel;
+        border: heavy $accent;
+    }
+    
+    #input_label {
+        padding: 0 2;
+        background: $accent;
+        color: $text;
+        text-style: bold;
+    }
+    
+    #input {
+        border: none;
+        padding: 1 2;
+        background: $panel;
+        color: $text;
+    }
+    
+    #input:focus {
+        border: tall $accent;
+        background: $boost;
+    }
+    
+    #status_bar {
+        dock: bottom;
+        height: 1;
+        background: $primary;
+        color: $text;
+        padding: 0 1;
+    }
+    
+    Footer {
+        background: $primary;
+    }
+    
+    /* Mode-specific colors */
+    .mode-cmd {
+        background: $warning;
+    }
+    
+    .mode-chat {
+        background: $accent;
+    }
+    
+    .mode-recon {
+        background: $primary;
+    }
+    
+    .mode-loot {
+        background: $success;
+    }
+    
+    .mode-report {
+        background: $secondary;
+    }
+    
+    .mode-red {
+        background: $error;
+    }
+    
+    .mode-exploit {
+        background: $warning-darken-2;
+    }
+    
+    .mode-osint {
+        background: $accent-darken-1;
+    }
+    
+    .mode-privesc {
+        background: $error-darken-1;
+    }
+    
+    /* Animations */
+    .thinking {
+        text-style: bold italic;
+        color: $warning;
+    }
+    
+    .user-message {
+        color: $accent;
+        text-style: bold;
+    }
+    
+    .ai-message {
+        color: $success;
+    }
+    
+    .system-message {
+        color: $text-muted;
+        text-style: italic;
+    }
+    
+    .error-message {
+        color: $error;
+        text-style: bold;
+    }
+    """
 
     BINDINGS = [
+        ("f1", "show_help", "Help"),
         ("f2", "toggle_mode", "Cycle modes"),
-        ("ctrl+h", "toggle_history", "Toggle shell history"),
+        ("f3", "show_target_info", "Target info"),
+        ("f4", "quick_commands", "Quick commands"),
+        ("f5", "show_stats", "Stats"),
+        ("ctrl+h", "toggle_history", "History"),
+        ("ctrl+l", "clear_log", "Clear"),
+        ("ctrl+s", "save_session", "Save"),
+        ("ctrl+t", "toggle_theme", "Theme"),
         ("ctrl+c", "quit", "Quit"),
     ]
 
@@ -505,41 +765,224 @@ class PentAIApp(App):
         self.logger = SessionLogger(self.target.name)
 
         self.include_history = True
+        self.message_count = 0
 
         self.header: Static
-        self.chat_log: TextLog
+        self.mode_indicator: Static
+        self.chat_log: RichLog
         self.input: Input
+        self.status_bar: Static
 
     def compose(self) -> ComposeResult:
-        self.header = Static("")
-        self.chat_log = TextLog(highlight=True, wrap=True)
-        self.input = Input(placeholder="Type prompt and press Enter…")
+        with Container(id="header_container"):
+            self.header = Static("", id="header")
+            self.mode_indicator = Static("", id="mode_indicator")
+        
+        with Container(id="chat_container"):
+            self.chat_log = RichLog(highlight=True, wrap=True, markup=True, id="chat_log")
+        
+        with Container(id="input_container"):
+            yield Static("› ", id="input_label")
+            self.input = Input(placeholder="Type your question or command...", id="input")
+        
+        self.status_bar = Static("", id="status_bar")
+        
         yield self.header
+        yield self.mode_indicator
         yield self.chat_log
         yield self.input
+        yield self.status_bar
+        yield Footer()
 
     def on_mount(self) -> None:
         self._update_header()
-        self.chat_log.write("PentAI TUI started.")
-        self.chat_log.write(
-            "Modes: cmd/chat/recon/loot/report/red | F2: cycle mode | Ctrl+H: toggle history"
-        )
+        self._update_mode_indicator()
+        self._update_status_bar()
+        
+        # Welcome message with styling
+        welcome = """
+[bold cyan]╔══════════════════════════════════════════════════════════════╗
+║           Welcome to PentAI TUI v2.0 Enhanced                ║
+║        AI-Powered Penetration Testing Assistant              ║
+╚══════════════════════════════════════════════════════════════╝[/bold cyan]
+
+[dim]Press F1 for help | F2 to cycle modes | F3 for stats | F4 for quick commands[/dim]
+"""
+        self.chat_log.write(welcome)
+        
+        # Show current mode info
+        mode_info = self._get_mode_info(self.mode)
+        self.chat_log.write(f"\n[bold yellow]Current Mode:[/bold yellow] {mode_info}")
+        
+        # Show available modes
+        modes_display = " | ".join([f"[cyan]{m}[/cyan]" for m in MODES])
+        self.chat_log.write(f"[dim]Available modes: {modes_display}[/dim]\n")
 
         if self.explicit_prefill:
             self.input.value = self.explicit_prefill
         else:
-            self.input.value = MODE_DEFAULT_PROMPTS.get(self.mode, "")
+            default = MODE_DEFAULT_PROMPTS.get(self.mode, "")
+            if default:
+                self.chat_log.write(f"[dim italic]{default}[/dim italic]")
 
         self.set_focus(self.input)
 
     # ----- Actions -----
+    
+    def action_show_help(self) -> None:
+        help_text = """
+[bold cyan]╔══════════════════════════════════════════════════════════════╗
+║                   PentAI TUI - Help Guide                    ║
+╚══════════════════════════════════════════════════════════════╝[/bold cyan]
+
+[bold yellow]Keyboard Shortcuts:[/bold yellow]
+  [cyan]F1[/cyan]      Show this help screen
+  [cyan]F2[/cyan]      Cycle through available modes
+  [cyan]F3[/cyan]      Show session statistics
+  [cyan]F4[/cyan]      Quick command suggestions
+  [cyan]Ctrl+H[/cyan]  Toggle shell history context
+  [cyan]Ctrl+L[/cyan]  Clear chat log
+  [cyan]Ctrl+S[/cyan]  Save current session
+  [cyan]Ctrl+T[/cyan]  Toggle color theme
+  [cyan]Ctrl+C[/cyan]  Exit application
+
+[bold yellow]Available Modes:[/bold yellow]
+  [cyan]⚡ CMD[/cyan]      Command explanation and error analysis
+  [cyan]💬 CHAT[/cyan]     General pentesting questions and advice
+  [cyan]🔍 RECON[/cyan]    Reconnaissance and enumeration planning
+  [cyan]💰 LOOT[/cyan]     Credential and artifact extraction
+  [cyan]📋 REPORT[/cyan]   Report generation and documentation
+  [cyan]🎯 RED[/cyan]      Red team attack chain planning
+  [cyan]💣 EXPLOIT[/cyan]  Exploit development and analysis
+  [cyan]🌐 OSINT[/cyan]    Intelligence gathering methodology
+  [cyan]⬆️ PRIVESC[/cyan]   Privilege escalation techniques
+
+[bold yellow]Tips:[/bold yellow]
+  • Type naturally - the AI understands context
+  • Use specific details for better responses
+  • Toggle history off (Ctrl+H) if too much context
+  • Save important sessions with Ctrl+S
+  • Press Enter to send your message
+
+[dim]For detailed documentation, see README.md and USAGE.md[/dim]
+"""
+        self.chat_log.write(help_text)
+        self.message_count += 1
+        self._update_status_bar()
+    
+    def action_show_stats(self) -> None:
+        stats = f"""
+[bold cyan]╔══════════════════════════════════════════════════════════════╗
+║                    Session Statistics                        ║
+╚══════════════════════════════════════════════════════════════╝[/bold cyan]
+
+[yellow]Target:[/yellow] {self.target.name}
+[yellow]Current Mode:[/yellow] {self.mode.upper()}
+[yellow]Messages:[/yellow] {self.message_count}
+[yellow]History:[/yellow] {'Enabled' if self.include_history else 'Disabled'}
+[yellow]Context File:[/yellow] {self.file_path.name if self.file_path else 'Auto-detect'}
+
+[yellow]Target Details:[/yellow]
+  Scope: {self.target.scope[:50]}{'...' if len(self.target.scope) > 50 else ''}
+  Tags: {', '.join(self.target.tags) if self.target.tags else 'None'}
+  Hosts: {len(self.target.hosts)} tracked
+  Findings: {len(self.target.findings)} documented
+"""
+        self.chat_log.write(stats)
+        self._update_status_bar()
+    
+    def action_show_target_info(self) -> None:
+        """Show detailed target information in a modal screen."""
+        self.push_screen(TargetInfoScreen(self.target))
+    
+    def action_quick_commands(self) -> None:
+        quick_cmds = {
+            "cmd": [
+                "Explain: nmap -sC -sV -p- target.com",
+                "Why does this fail: sqlmap -u http://site.com?id=1",
+                "Improve: hydra -L users.txt -P pass.txt ssh://target"
+            ],
+            "recon": [
+                "What should I enumerate after initial scan?",
+                "How to deeply probe discovered web services?",
+                "Plan enumeration for discovered SMB shares"
+            ],
+            "loot": [
+                "Find credentials in this output",
+                "Extract API keys and tokens",
+                "Identify sensitive configuration data"
+            ],
+            "exploit": [
+                "Help exploit CVE-2021-44228 (Log4Shell)",
+                "Craft reverse shell payload for Windows",
+                "Bypass ASLR in this vulnerable binary"
+            ],
+            "osint": [
+                "Enumerate subdomains for target.com",
+                "Find employee emails and usernames",
+                "Identify technologies used by target"
+            ],
+            "privesc": [
+                "Analyze LinPEAS output for privesc vectors",
+                "Exploit sudo misconfiguration: (ALL) NOPASSWD: /usr/bin/vim",
+                "Find Windows privilege escalation paths"
+            ]
+        }
+        
+        cmds = quick_cmds.get(self.mode, ["Ask me anything about pentesting!"])
+        cmd_list = "\n".join([f"  [cyan]{i+1}.[/cyan] {cmd}" for i, cmd in enumerate(cmds)])
+        
+        msg = f"""
+[bold yellow]Quick Command Suggestions for {self.mode.upper()} Mode:[/bold yellow]
+
+{cmd_list}
+
+[dim]Click or type any suggestion to use it[/dim]
+"""
+        self.chat_log.write(msg)
+        self._update_status_bar()
+    
+    def action_clear_log(self) -> None:
+        self.chat_log.clear()
+        self.message_count = 0
+        self.chat_log.write("[dim italic]Chat log cleared. Start fresh![/dim italic]")
+        self._update_status_bar()
+    
+    def action_save_session(self) -> None:
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            save_path = get_data_dir() / f"session_{self.target.name}_{timestamp}.txt"
+            save_path.write_text(
+                f"PentAI Session - {self.target.name}\n"
+                f"Mode: {self.mode}\n"
+                f"Date: {datetime.now().isoformat()}\n"
+                f"Messages: {self.message_count}\n",
+                encoding="utf-8"
+            )
+            self.chat_log.write(f"[green]✓ Session saved to: {save_path.name}[/green]")
+        except Exception as e:
+            self.chat_log.write(f"[red]✗ Error saving session: {e}[/red]")
+        self._update_status_bar()
+    
+    def action_toggle_theme(self) -> None:
+        """Toggle between available Textual themes."""
+        self.chat_log.write("[yellow]Theme toggle feature - coming soon![/yellow]")
+        # Note: Actual theme switching requires Textual theme configuration
+        self._update_status_bar()
 
     def action_toggle_mode(self) -> None:
         prev_mode = self.mode
         idx = MODES.index(self.mode)
         self.mode = MODES[(idx + 1) % len(MODES)]
-        self.chat_log.write(f"[system] Mode switched to: {self.mode}")
+        
+        mode_info = self._get_mode_info(self.mode)
+        self.chat_log.write(f"\n[bold cyan]═══ Mode Changed ═══[/bold cyan]")
+        self.chat_log.write(f"[yellow]Previous:[/yellow] {prev_mode.upper()}")
+        self.chat_log.write(f"[green]Current:[/green] {mode_info}\n")
+        
         self._update_header()
+        self._update_mode_indicator()
+        self._update_status_bar()
 
         prev_default = MODE_DEFAULT_PROMPTS.get(prev_mode, "")
         if (not self.input.value.strip()) or (self.input.value == prev_default):
@@ -548,23 +991,75 @@ class PentAIApp(App):
 
     def action_toggle_history(self) -> None:
         self.include_history = not self.include_history
-        status = "on" if self.include_history else "off"
-        self.chat_log.write(f"[system] Shell history context: {status}")
+        status = "[green]enabled[/green]" if self.include_history else "[red]disabled[/red]"
+        self.chat_log.write(f"[yellow]Shell history context: {status}[/yellow]")
         self._update_header()
+        self._update_status_bar()
 
     # ----- Helpers -----
+    
+    def _get_mode_info(self, mode: str) -> str:
+        """Get formatted mode information with emoji."""
+        mode_emojis = {
+            "cmd": "⚡",
+            "chat": "💬",
+            "recon": "🔍",
+            "loot": "💰",
+            "report": "📋",
+            "red": "🎯",
+            "exploit": "💣",
+            "osint": "🌐",
+            "privesc": "⬆️",
+        }
+        mode_names = {
+            "cmd": "Command Analysis",
+            "chat": "General Chat",
+            "recon": "Reconnaissance",
+            "loot": "Loot Hunter",
+            "report": "Report Writer",
+            "red": "Red Team",
+            "exploit": "Exploit Dev",
+            "osint": "OSINT",
+            "privesc": "Privilege Escalation",
+        }
+        emoji = mode_emojis.get(mode, "❓")
+        name = mode_names.get(mode, mode.upper())
+        return f"{emoji} {name}"
+    
+    def _update_mode_indicator(self) -> None:
+        """Update the mode indicator with current mode info."""
+        mode_info = self._get_mode_info(self.mode)
+        mode_desc = MODE_INSTRUCTIONS.get(self.mode, "").split("\n")[0].replace("Mode: ", "")
+        
+        indicator = f"[bold]{mode_info}[/bold] - {mode_desc}"
+        self.mode_indicator.update(indicator)
+    
+    def _update_status_bar(self) -> None:
+        """Update the status bar with current state."""
+        hist_icon = "📜" if self.include_history else "📭"
+        file_icon = "📄" if self.file_path else "🔍"
+        
+        status = (
+            f" {hist_icon} History: {'ON' if self.include_history else 'OFF'} | "
+            f"{file_icon} Context: {self.file_path.name if self.file_path else 'Auto'} | "
+            f"💬 Messages: {self.message_count} | "
+            f"🎯 Target: {self.target.name}"
+        )
+        self.status_bar.update(status)
 
     def _update_header(self) -> None:
-        hist_status = "on" if self.include_history else "off"
-        if self.file_path:
-            file_info = f" | File: {self.file_path}"
-        else:
-            file_info = " | File: auto-detect"
-        self.header.update(
-            f"PentAI | Target: {self.target.name} | Mode: {self.mode} "
-            f"| Shell history: {hist_status}{file_info} "
-            "| F2: mode, Ctrl+H: history, Ctrl+C: quit"
+        """Update the main header with styled information."""
+        mode_emoji = {
+            "cmd": "⚡", "chat": "💬", "recon": "🔍", "loot": "💰",
+            "report": "📋", "red": "🎯", "exploit": "💣", "osint": "🌐", "privesc": "⬆️"
+        }.get(self.mode, "❓")
+        
+        header_text = (
+            f"[bold cyan]PentAI v2.0[/bold cyan] | "
+            f"🎯 [yellow]{self.target.name}[/yellow] | "
+            f"{mode_emoji} [green]{self.mode.upper()}[/green]"
         )
+        self.header.update(header_text)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         user_text = event.value.strip()
@@ -572,18 +1067,53 @@ class PentAIApp(App):
         if not user_text:
             return
 
-        self.chat_log.write(f"[you] {user_text}")
-        self.chat_log.write("[ai] thinking…")
+        self.message_count += 1
+        self._update_status_bar()
+        
+        # Display user message with styling
+        self.chat_log.write(f"\n[bold cyan]╭─ You[/bold cyan]")
+        self.chat_log.write(f"[cyan]│[/cyan] {user_text}")
+        self.chat_log.write(f"[cyan]╰{'─' * 60}[/cyan]")
+        
+        # Show thinking indicator
+        self.chat_log.write("\n[bold yellow]╭─ AI Assistant[/bold yellow]")
+        self.chat_log.write("[yellow]│[/yellow] [italic dim]Thinking...[/italic dim]")
 
         try:
             reply, context_file, context_hash = self._call_llm(user_text)
+            
+            # Clear thinking message and show reply
+            self.chat_log.clear()
+            
+            # Re-display user message
+            self.chat_log.write(f"\n[bold cyan]╭─ You[/bold cyan]")
+            self.chat_log.write(f"[cyan]│[/cyan] {user_text}")
+            self.chat_log.write(f"[cyan]╰{'─' * 60}[/cyan]")
+            
+            # Display AI reply with styling
+            self.chat_log.write("\n[bold green]╭─ AI Assistant[/bold green]")
+            
+            # Format the reply with proper line breaks
+            for line in reply.split('\n'):
+                if line.strip():
+                    self.chat_log.write(f"[green]│[/green] {line}")
+                else:
+                    self.chat_log.write("[green]│[/green]")
+            
+            self.chat_log.write(f"[green]╰{'─' * 60}[/green]")
+            
+            # Show context info if available
+            if context_file:
+                self.chat_log.write(f"[dim]Context: {Path(context_file).name} (hash: {context_hash[:8]}...)[/dim]")
+                
         except Exception as e:
-            reply = f"Error contacting model: {e}"
+            self.chat_log.write(f"\n[bold red]✗ Error:[/bold red] {str(e)}")
+            reply = f"Error: {e}"
             context_file = None
             context_hash = None
 
-        self.chat_log.write(f"[ai] {reply}")
         self.logger.log(self.mode, user_text, reply, context_file, context_hash)
+        self._update_status_bar()
 
     def _call_llm(self, user_text: str) -> tuple[str, Optional[str], Optional[str]]:
         if self.file_path and self.file_path.exists():

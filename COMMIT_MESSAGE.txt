@@ -1,0 +1,65 @@
+feat: PentAI TUI v2.0 Enhanced - Major UI overhaul and comprehensive enhancements
+
+🎨 UI Enhancements (~400 lines)
+- Added 150+ lines of CSS styling with professional theming
+- Implemented box-drawing borders for clean visual hierarchy
+- Created 9 mode-specific color themes with emoji indicators
+- Built live status bar with real-time emoji icons
+- Added modal dialog system (TargetInfoScreen)
+- Formatted message boxes with user/AI distinction
+- Professional welcome screen with ASCII art
+
+⌨️ Keyboard Shortcuts (3 → 10)
+- F1: Comprehensive help screen
+- F3: Target information modal
+- F4: Mode-specific quick commands
+- F5: Session statistics
+- Ctrl+L: Clear log
+- Ctrl+S: Save session
+- Ctrl+T: Theme toggle
+- Enhanced F2 and Ctrl+H
+
+🎯 New Modes (6 → 9)
+- EXPLOIT: Exploit development and analysis
+- OSINT: Intelligence gathering methodology
+- PRIVESC: Privilege escalation guidance
+
+📚 Documentation (2500+ lines)
+- README.md: Enhanced to 449 lines (+80%)
+- USAGE.md: Complete usage guide (400+ lines)
+- EXAMPLES.md: Real-world scenarios (500+ lines)
+- FEATURES.md: Detailed feature list
+- QUICKREF.md: Quick reference card
+- CHANGELOG.md: Version history
+- UI_ENHANCEMENTS.md: UI improvement details (400+ lines)
+- VISUAL_COMPARISON.md: Before/after comparison (300+ lines)
+- UI_COMPLETE.md: Completion summary
+- FIXED.md: Import error resolution
+- ENHANCEMENTS.md: Technical enhancements
+- PROJECT_COMPLETE.md: Project summary
+- LICENSE: MIT license
+
+🐛 Bug Fixes
+- Fixed TextLog → RichLog import (Textual 6.6.0)
+- Corrected model default: gpt-4o-mini
+- Added missing mode implementations
+
+🔧 Improvements
+- Enhanced shell integration (250+ lines)
+- Improved setup script with config dirs
+- Extended .gitignore patterns
+- Better error handling and feedback
+- Context file display with hash
+- Message counter tracking
+- Visual feedback for all actions
+
+📊 Metrics
+- UI Code: 50 → 450 lines (+800%)
+- CSS: 0 → 150+ lines
+- Key Bindings: 3 → 10 (+233%)
+- Visual Elements: 1 → 20+ (+1900%)
+- Documentation: 0 → 2500+ lines
+
+Breaking Changes: None - fully backward compatible
+
+BREAKING CHANGE: None

@@ -8,6 +8,10 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 VENV_DIR="${VENV_DIR:-"$REPO_ROOT/.venv"}"
 
+echo "======================================"
+echo "  PentAI TUI v2.0 Setup"
+echo "======================================"
+echo ""
 echo "[*] Using repo root: $REPO_ROOT"
 echo "[*] Using Python:   $PYTHON_BIN"
 echo "[*] Venv dir:       $VENV_DIR"
@@ -36,6 +40,32 @@ pip install -r "$REPO_ROOT/requirements.txt"
 # Ensure pentai.py is executable
 chmod +x "$REPO_ROOT/pentai.py"
 
+# Create config directories
+CONFIG_DIR="$HOME/.config/pentai"
+DATA_DIR="$HOME/.local/share/pentai"
+
+mkdir -p "$CONFIG_DIR/targets"
+mkdir -p "$DATA_DIR"
+echo "[*] Created config directories"
+
+# Create default target config
+DEFAULT_CONFIG="$CONFIG_DIR/targets/default.json"
+if [ ! -f "$DEFAULT_CONFIG" ]; then
+    cat > "$DEFAULT_CONFIG" << EOF
+{
+  "name": "default",
+  "scope": "Define your target scope here (IP ranges, domains, etc.)",
+  "notes": "Default target configuration. Use --init-target to create specific targets.",
+  "loot_paths": [],
+  "tags": ["default"],
+  "hosts": [],
+  "credentials": {},
+  "findings": []
+}
+EOF
+    echo "[*] Created default target config"
+fi
+
 # Wire zsh helpers
 ZSHRC="$HOME/.zshrc"
 SNIPPET_LINE="source \"$REPO_ROOT/zsh_snippets.sh\""
@@ -56,11 +86,15 @@ fi
 
 cat <<EOF
 
-[*] Setup complete.
+======================================"
+  ✅ Setup Complete!
+======================================"
 
 Environment:
   Venv:   $VENV_DIR
   Script: $REPO_ROOT/pentai.py
+  Config: $CONFIG_DIR
+  Data:   $DATA_DIR
 
 Next steps:
 
@@ -74,11 +108,28 @@ Next steps:
 
 3) From anywhere, you can now run:
    ai-cmd      # explain last command
+   ai-chat     # general chat
    ai-recon    # recon planner
    ai-loot F   # loot finder on file F
    ai-report   # report notes
    ai-red      # red team attack-chain planner
+   ai-exploit  # exploit development
+   ai-osint    # OSINT guidance
+   ai-privesc  # privilege escalation
 
 Or run directly:
    "$VENV_DIR/bin/python" "$REPO_ROOT/pentai.py" --mode cmd
+
+Documentation:
+  - README.md   : Overview and quick start
+  - USAGE.md    : Complete usage guide
+  - FEATURES.md : Feature documentation
+  - EXAMPLES.md : Real-world scenarios
+
+Create a target:
+  pentai.py --init-target my-project
+
+View help:
+  pentai.py --help
+  Press F1 inside the TUI for shortcuts
 EOF

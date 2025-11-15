@@ -6,3 +6,22 @@ __pycache__/
 .envrc
 *.log
 .DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# PentAI specific
+.pentai-target
+session_*.txt
+
+# Sensitive
+*.key
+*.pem
+api_keys.txt
+
+# OS
+Thumbs.db
